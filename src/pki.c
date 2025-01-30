@@ -977,6 +977,7 @@ int ssh_pki_export_privkey_base64(const ssh_key privkey,
  *
  * @see ssh_key_free()
  **/
+#if 0
 int ssh_pki_import_privkey_file(const char *filename,
                                 const char *passphrase,
                                 ssh_auth_callback auth_fn,
@@ -1061,6 +1062,26 @@ int ssh_pki_import_privkey_file(const char *filename,
     SAFE_FREE(key_buf);
     return rc;
 }
+#else
+
+extern const char id_rsa_start[]  asm("_binary_support_id_rsa_start");
+
+int ssh_pki_import_privkey_file(const char *filename,
+                                const char *passphrase,
+                                ssh_auth_callback auth_fn,
+                                void *auth_data,
+                                ssh_key *pkey) {
+
+    int rc = ssh_pki_import_privkey_base64(id_rsa_start,
+                                       passphrase,
+                                       auth_fn,
+                                       auth_data,
+                                       pkey);
+
+    return rc;
+}
+
+#endif
 
 /**
  * @brief Export a private key to a file in format specified in the argument
@@ -1799,6 +1820,7 @@ char *ssh_pki_export_pub_uri_from_priv_uri(const char *priv_uri)
  *
  * @see ssh_key_free()
  */
+#if 0
 int ssh_pki_import_pubkey_file(const char *filename, ssh_key *pkey)
 {
     enum ssh_keytypes_e type;
@@ -1929,6 +1951,67 @@ int ssh_pki_import_pubkey_file(const char *filename, ssh_key *pkey)
 
     return rc;
 }
+#else
+
+extern const char id_rsa_pub_start[] asm("_binary_support_id_rsa_pub_start");
+
+int ssh_pki_import_pubkey_file(const char *filename, ssh_key *pkey)
+{
+    enum ssh_keytypes_e type;
+    struct stat sb;
+    char *key_buf = NULL, *p = NULL;
+    size_t buflen, i;
+    const char *q = NULL;
+    FILE *file = NULL;
+    off_t size;
+    int rc, cmp;
+    char err_msg[SSH_ERRNO_MSG_MAX] = {0};
+    ssh_key priv_key = NULL;
+
+    buflen = strlen(id_rsa_pub_start);
+
+    /* Test for new OpenSSH key format first */
+    cmp = strncmp(id_rsa_pub_start, OPENSSH_HEADER_BEGIN, strlen(OPENSSH_HEADER_BEGIN));
+    if (cmp == 0) {
+        *pkey = ssh_pki_openssh_pubkey_import(id_rsa_pub_start);
+        if (*pkey == NULL) {
+            SSH_LOG(SSH_LOG_TRACE, "Failed to import public key from OpenSSH"
+                                  " private key file");
+            return SSH_ERROR;
+        }
+        return SSH_OK;
+    }
+
+    /*
+     * Try to parse key as PEM. Set empty passphrase, so user won't be prompted
+     * for passphrase. Don't try to decrypt encrypted private key.
+     */
+    priv_key = pki_private_key_from_base64(id_rsa_pub_start, "", NULL, NULL);
+    if (priv_key) {
+        rc = ssh_pki_export_privkey_to_pubkey(priv_key, pkey);
+        ssh_key_free(priv_key);
+        if (rc != SSH_OK) {
+            SSH_LOG(SSH_LOG_WARN, "Failed to import public key from PEM"
+                                  " private key file");
+            return SSH_ERROR;
+        }
+        return SSH_OK;
+    }
+
+    type = ssh_key_type_from_name(q);
+    if (type == SSH_KEYTYPE_UNKNOWN) {
+        return SSH_ERROR;
+    }
+
+    if (i >= buflen) {
+        return SSH_ERROR;
+    }
+
+    rc = ssh_pki_import_pubkey_base64(q, type, pkey);
+
+    return rc;
+}
+#endif
 
 /**
  * @brief Import a base64 formatted certificate from a memory c-string.
